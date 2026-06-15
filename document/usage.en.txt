@@ -1,0 +1,136 @@
+========================================
+  Startup, Verification & Testing Guide
+  API Monitoring — Hybrid Storage
+========================================
+
+[Prerequisites]
+    - Docker Desktop installed and running
+    - Python 3.x installed (for the host-side scripts)
+    - Install the requests package in your terminal:
+        pip install requests
+
+[Step 1] Start all services
+    Change into the project root (the folder containing docker-compose.yml):
+        cd api_monitoring
+
+    Start:
+        docker compose up -d
+
+    Wait for all containers to become ready (about 10-20 seconds), then check status:
+        docker compose ps
+    You should see all 18 services as Up / healthy:
+        etcd1/2/3, patroni1/2/3, haproxy,
+        redis-master, redis-replica1, redis-replica2,
+        sentinel1, sentinel2, sentinel3,
+        api, redis_exporter, postgres_exporter, prometheus, grafana
+
+[Step 2] Verify each service is reachable
+    2.1 API health check:
+        http://localhost:8000/
+        -> returns {"message": "API is running normally.", "storage": "PostgreSQL + Redis (Hybrid)"}
+
+    2.2 Prometheus metrics endpoint:
+        http://localhost:8000/metrics/
+        -> shows plain-text metrics (starting with # HELP), confirming instrumentation works
+
+    2.3 Prometheus query UI:
+        http://localhost:9090
+        -> type http_requests_total in the search box and confirm there is data
+
+    2.4 Grafana visualization:
+        http://localhost:3000
+        Account: admin (password: see .env or the project notes)
+
+    2.5 user_api service (started separately):
+        python3 user_api.py
+        http://localhost:8001/health  -> {"status": "ok"}
+        http://localhost:8001/docs    -> Swagger UI
+
+[Step 3] Import the Grafana Dashboard
+    grafana_dashboard.json uses the Grafana v2 API format and must be imported with the
+    commands below; the Grafana UI Import feature cannot be used.
+
+    Run from the project root (api_monitoring/) and replace YOUR_PASSWORD with your Grafana password:
+
+    Step 3.1 - Create the Prometheus datasource and note the UID it prints:
+        python3 -c "
+import json, urllib.request, base64
+auth = base64.b64encode(b'admin:YOUR_PASSWORD').decode()
+payload = {'name':'Prometheus','type':'prometheus','url':'http://prometheus:9090','access':'proxy','isDefault':True}
+body = json.dumps(payload).encode()
+req = urllib.request.Request('http://localhost:3000/api/datasources', data=body, method='POST',
+    headers={'Authorization':'Basic '+auth,'Content-Type':'application/json'})
+resp = json.loads(urllib.request.urlopen(req).read())
+print('Datasource UID:', resp['datasource']['uid'])
+"
+
+    Step 3.2 - Import the dashboard (replace YOUR_PASSWORD and NEW_DS_UID with the UID from Step 3.1):
+        python3 -c "
+import json, urllib.request, base64
+auth = base64.b64encode(b'admin:YOUR_PASSWORD').decode()
+with open('grafana_dashboard.json') as f:
+    content = f.read()
+content = content.replace('efmeo1r0mk8w0e', 'NEW_DS_UID')
+d = json.loads(content)
+d['metadata'].pop('resourceVersion', None)
+d['metadata'].pop('uid', None)
+d['metadata'].pop('creationTimestamp', None)
+d.pop('status', None)
+body = json.dumps(d).encode()
+req = urllib.request.Request(
+    'http://localhost:3000/apis/dashboard.grafana.app/v2/namespaces/default/dashboards',
+    data=body, method='POST',
+    headers={'Authorization': 'Basic ' + auth, 'Content-Type': 'application/json'}
+)
+print(urllib.request.urlopen(req).read().decode()[:80])
+print('Dashboard imported successfully')
+"
+
+    After a successful import, go to Grafana -> Dashboards to see it.
+    The dashboard contains 5 rows / 19 panels:
+        Row 0: HTTP Traffic (Read API Traffic & Latency, Write API Traffic & Latency)
+        Row 1: HTTP Traffic (RPS, Latency P99/P95/P50, Error Rate, Total Requests)
+        Row 2: Redis Cache (Hit Rate, Hits vs Misses, Redis Errors)
+        Row 3: PostgreSQL (DB Query Duration P99, DB Errors)
+        Row 4: Log Storm / Chaos Indicators (Storm Active x2, Write Rate x2, Write Duration P99 x2, DB Connections)
+        Row 5: System Resources (CPU %, Memory %, Memory Used MB)
+    Recommended settings: Time Range = Last 15m, Auto Refresh = 5s
+
+[Step 4] Start the user_api service (Terminal 1)
+    Run from the project root:
+        python3 user_api.py
+    -> runs on localhost:8001, simulating real user behavior (search, query, register customers)
+    -> exposes /metrics so Prometheus can scrape user_api_* metrics
+    -> Swagger: http://localhost:8001/docs
+    Note: this must be started before running user_traffic_generator.py
+
+[Step 5] Generate dual-service traffic + chaos testing (Terminal 2)
+    Basic continuous traffic mode:
+        python3 user_traffic_generator.py
+
+    Interactive five-phase demo (for presentations; open Grafana side by side):
+        python3 user_traffic_generator.py --interactive
+        Phase 1: Normal baseline (both services have steady low-latency traffic)
+        Phase 2: user_api Log Storm (scatter P99 jumps to 200ms+)
+        Phase 3: System-wide Log Storm (DB pressure + forced DB errors triggered)
+        Phase 4: Connection Exhaust (4/5 DB connections held for 10s + forced errors)
+        Phase 5: Recovery (everything stops, all panels settle back down)
+
+    Chaos automatic mode (non-interactive):
+        python3 user_traffic_generator.py --chaos log-storm-all --chaos-duration 60
+    -> Ctrl+C aborts at any time; the script runs Recovery automatically
+
+[Step 6] Manually trigger a single anomaly (can be tested independently)
+    curl http://localhost:8000/api/anomaly/lag              # 2.5s latency
+    curl http://localhost:8000/api/anomaly/error            # HTTP 500
+    curl http://localhost:8000/api/anomaly/db-overload      # pg_sleep(3) slow query
+    curl http://localhost:8000/api/anomaly/cache-flush      # flush Redis
+    curl http://localhost:8000/api/anomaly/redis-down       # Redis disconnect simulation
+    curl http://localhost:8000/api/anomaly/db-error         # forced DB error
+    curl http://localhost:8000/api/anomaly/log-storm/start  # start Log Storm
+    curl http://localhost:8000/api/anomaly/log-storm/stop   # stop Log Storm
+    curl http://localhost:8000/api/anomaly/log-storm/status # query Log Storm status
+    curl http://localhost:8000/api/anomaly/connection-exhaust # exhaust connection pool for 10s
+
+[Step 7] Stop all services
+    docker compose down

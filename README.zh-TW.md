@@ -152,10 +152,14 @@ api_monitoring/
 
 ## 📚 延伸文件
 
-- [專案 Wiki（PDF）](document/project_wiki.pdf)
-- [簡報（PDF）](document/presentation_slides.pdf)
+| 文件 | 繁體中文 | English |
+|---|---|---|
+| 專案 Wiki | [PDF](document/project_wiki.pdf) | [PDF](document/project_wiki.en.pdf) |
+| 簡報 | [PDF](document/presentation_slides.pdf) | [PDF](document/presentation_slides.en.pdf) |
+| SRE 測試手冊 | [Markdown](document/sre_testing_runbook.md) | [Markdown](document/sre_testing_runbook.en.md) |
+| 啟動與使用說明 | [Text](document/usage.txt) | [Text](document/usage.en.txt) |
+
+圖表（不分語言）：
 - [系統架構圖（PDF）](document/system_architecture.pdf)
 - [類別圖（PDF）](document/class_diagram.pdf)
 - [混沌情境序列圖（PDF）](document/Sequence_Chaos.pdf)
-- [SRE 測試手冊](document/sre_testing_runbook.md)
-- [啟動與使用說明](document/usage.txt)

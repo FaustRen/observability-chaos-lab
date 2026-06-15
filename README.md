@@ -152,10 +152,14 @@ api_monitoring/
 
 ## 📚 Further Documentation
 
-- [Project Wiki (PDF)](document/project_wiki.pdf)
-- [Presentation Slides (PDF)](document/presentation_slides.pdf)
+| Document | English | 繁體中文 |
+|---|---|---|
+| Project Wiki | [PDF](document/project_wiki.en.pdf) | [PDF](document/project_wiki.pdf) |
+| Presentation Slides | [PDF](document/presentation_slides.en.pdf) | [PDF](document/presentation_slides.pdf) |
+| SRE Testing Runbook | [Markdown](document/sre_testing_runbook.en.md) | [Markdown](document/sre_testing_runbook.md) |
+| Startup & Usage Guide | [Text](document/usage.en.txt) | [Text](document/usage.txt) |
+
+Diagrams (language-neutral):
 - [System Architecture (PDF)](document/system_architecture.pdf)
 - [Class Diagram (PDF)](document/class_diagram.pdf)
 - [Chaos Scenario Sequence Diagram (PDF)](document/Sequence_Chaos.pdf)
-- [SRE Testing Runbook](document/sre_testing_runbook.md)
-- [Startup & Usage Guide](document/usage.txt)

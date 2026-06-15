@@ -1,3 +1,9 @@
+<div align="right">
+
+[English](sre_testing_runbook.en.md) · **繁體中文**
+
+</div>
+
 # SRE Testing Runbook — API Monitoring System
 
 > **文件定位**：本文件為 Site Reliability Engineer（SRE）執行壓測與混沌工程的操作手冊（Runbook）。  
