@@ -58,3 +58,5 @@ document/copilot_chat/
 !document/sre_testing_runbook.en.md
 !document/usage.txt
 !document/usage.en.txt
+!document/screenshots/
+!document/screenshots/*.png

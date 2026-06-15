@@ -116,6 +116,47 @@ Import steps are detailed in [document/usage.txt](document/usage.txt). The dashb
 
 ---
 
+## 📸 Live Demo — Dashboard Results
+
+The screenshots below were captured live from Grafana while running the chaos runbook end-to-end. Each one corresponds to a phase in [document/sre_testing_runbook.en.md](document/sre_testing_runbook.en.md).
+
+### 1. Baseline (Steady State)
+Normal traffic with a healthy cache hit ratio and no errors — the reference point for every fault that follows.
+
+![Baseline dashboard](document/screenshots/01_baseline.png)
+
+### 2. user_api Log Storm
+A log storm is triggered on the host `user_api` service, driving up its write rate and latency while the rest of the system stays stable.
+
+![user_api log storm](document/screenshots/02_user_storm.png)
+
+### 3. System-wide Log Storm + DB Errors
+The storm spreads across the stack and DB errors are injected, lighting up the chaos indicators and 5xx error panels.
+
+![System-wide log storm and DB errors](document/screenshots/03_system_storm.png)
+
+### 4. Connection-Pool Exhaustion
+The DB connection pool is deliberately exhausted (18/20 connections held), pushing query latency P99 up and surfacing active-connection saturation.
+
+![Connection-pool exhaustion](document/screenshots/04_conn_exhaust.png)
+
+### 5. Recovery
+Fault injection stops; latency, errors, and connection usage return to baseline as the system self-heals.
+
+![Recovery](document/screenshots/05_recovery.png)
+
+### 6. PostgreSQL HA Failover
+The primary PostgreSQL node is killed. A brief 5xx/503 spike and latency surge appear while Patroni elects a new leader (RTO ≈ 5s).
+
+![HA failover](document/screenshots/06_ha_failover.png)
+
+### 7. HA Recovered
+The old primary rejoins as a streaming replica and the newly elected leader serves traffic — errors back to zero, cluster healthy again.
+
+![HA recovered](document/screenshots/07_ha_recovered.png)
+
+---
+
 ## 🧪 Chaos & Load-Testing Scripts
 
 | Script | Purpose |
