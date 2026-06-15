@@ -116,44 +116,13 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 📸 實機展示 — 儀表板結果
+## 📸 實機展示 — 儀表板總覽
 
-以下截圖是在執行完整混沌測試手冊時，從 Grafana 即時擷取而來。每張圖對應 [document/sre_testing_runbook.md](document/sre_testing_runbook.md) 中的一個階段。
+混沌測試期間從 Grafana 即時擷取的完整儀表板——一個畫面涵蓋整條 RED Method 鏈：HTTP 流量與延遲、Redis 快取、PostgreSQL、日誌風暴 / 混沌指標、以及系統資源。
 
-### 1. 基準線（穩態）
-正常流量、健康的快取命中率、零錯誤——作為後續所有故障注入的參考基準。
+![Grafana + Prometheus 儀表板總覽](document/screenshots/grafana_prometheus_dashboard.png)
 
-![基準線儀表板](document/screenshots/01_baseline.png)
-
-### 2. user_api 日誌風暴
-在主機端 `user_api` 服務觸發日誌風暴，推升其寫入速率與延遲，而系統其餘部分維持穩定。
-
-![user_api 日誌風暴](document/screenshots/02_user_storm.png)
-
-### 3. 全系統日誌風暴 + 資料庫錯誤
-風暴擴散至整個架構並注入資料庫錯誤，點亮混沌指標與 5xx 錯誤面板。
-
-![全系統日誌風暴與資料庫錯誤](document/screenshots/03_system_storm.png)
-
-### 4. 連線池耗盡
-刻意耗盡資料庫連線池（佔用 18/20 連線），推升查詢延遲 P99 並呈現連線飽和狀態。
-
-![連線池耗盡](document/screenshots/04_conn_exhaust.png)
-
-### 5. 恢復
-停止故障注入後，延遲、錯誤與連線使用率回到基準線，系統自我修復。
-
-![恢復](document/screenshots/05_recovery.png)
-
-### 6. PostgreSQL 高可用 Failover
-強制關閉 PostgreSQL 主節點。Patroni 重新選舉新 Leader 期間，可見短暫的 5xx/503 尖峰與延遲突增（RTO ≈ 5 秒）。
-
-![高可用 Failover](document/screenshots/06_ha_failover.png)
-
-### 7. 高可用恢復
-舊主節點以串流 Replica 身分重新加入，由新選出的 Leader 提供服務——錯誤歸零，叢集再次健康。
-
-![高可用恢復](document/screenshots/07_ha_recovered.png)
+完整的混沌與 Failover 實作流程請見 [document/sre_testing_runbook.md](document/sre_testing_runbook.md)。
 
 ---
 
