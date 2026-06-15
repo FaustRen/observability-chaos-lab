@@ -1,0 +1,82 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# patroni.yml — 共用 Patroni 設定（三個節點共享此檔案）
+#
+# 節點專屬設定（name、connect_address、data_dir）透過 docker-compose.yml
+# 中的環境變數覆寫，Patroni 原生支援以下 env 優先於 YAML 值：
+#   PATRONI_NAME                       → scope.name
+#   PATRONI_RESTAPI_LISTEN             → restapi.listen
+#   PATRONI_RESTAPI_CONNECT_ADDRESS    → restapi.connect_address
+#   PATRONI_POSTGRESQL_LISTEN          → postgresql.listen
+#   PATRONI_POSTGRESQL_CONNECT_ADDRESS → postgresql.connect_address
+#   PATRONI_POSTGRESQL_DATA_DIR        → postgresql.data_dir
+#   PATRONI_SUPERUSER_USERNAME/PASSWORD → postgresql.authentication.superuser
+#   PATRONI_REPLICATION_USERNAME/PASSWORD → postgresql.authentication.replication
+# ──────────────────────────────────────────────────────────────────────────────
+
+scope: pg-ha-cluster
+namespace: /db/
+
+# DCS：使用 etcd v3（etcd3gw HTTP 閘道後端，無需 gRPC 編譯，跨平台相容性高）
+etcd3:
+  hosts: etcd1:2379,etcd2:2379,etcd3:2379
+
+# ── Bootstrap（僅在第一次初始化叢集時執行）─────────────────────────────────
+bootstrap:
+  dcs:
+    ttl: 30                         # Patroni 鎖定 TTL（秒），超過則觸發 Failover
+    loop_wait: 10                   # Patroni 主循環間隔（秒）
+    retry_timeout: 10               # etcd 操作逾時（秒）
+    maximum_lag_on_failover: 1048576 # Replica 最大落後位元組（1 MB），超過則不升格
+
+    postgresql:
+      use_pg_rewind: true           # 允許使用 pg_rewind 快速追趕 WAL
+      use_slots: true               # 使用 Replication Slots 防止 WAL 被清除
+      parameters:
+        # ── WAL（Write-Ahead Log）設定 ────────────────────────────────────
+        wal_level: replica          # 啟用 Streaming Replication 所需的 WAL 等級
+        hot_standby: "on"           # Replica 允許只讀查詢
+        wal_log_hints: "on"         # pg_rewind 需要此選項
+        max_wal_senders: 10         # 最大 WAL sender 行程數（每個 Replica 佔一個）
+        max_replication_slots: 10   # 最大 Replication Slot 數量
+        wal_keep_size: 256          # 保留 WAL 段的最小大小（MB），防止 Replica 落後過多
+
+        # ── 連線設定 ─────────────────────────────────────────────────────
+        max_connections: 100
+
+        # ── Heartbeat / 可用性設定 ────────────────────────────────────────
+        wal_receiver_status_interval: 5s   # Replica 向 Primary 回報位置的間隔
+        hot_standby_feedback: "on"         # Replica 通知 Primary 其事務快照，防止衝突
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums               # 啟用資料頁校驗，可偵測靜默資料損毀
+
+  pg_hba:
+    # Replication 認證（replicator 用戶，MD5）
+    - host replication replicator 0.0.0.0/0 md5
+    # 應用程式認證（所有用戶，MD5）
+    - host all all 0.0.0.0/0 md5
+
+  # 叢集 Bootstrap 後執行的初始化腳本（建立 appdb 資料庫與 appuser）
+  post_bootstrap: /scripts/post_bootstrap.sh
+
+  # Bootstrap 時建立的 PostgreSQL 角色（PATRONI_SUPERUSER_* env 已處理 postgres 帳號）
+  users:
+    appuser:
+      password: apppassword
+      options:
+        - createdb
+
+# ── PostgreSQL 設定 ────────────────────────────────────────────────────────
+postgresql:
+  # bin_dir 路徑：postgres:15 映像的二進位目錄
+  bin_dir: /usr/lib/postgresql/15/bin
+
+  # pgpass 檔案路徑（Patroni 自動寫入複製認證資訊，避免互動式密碼提示）
+  pgpass: /tmp/pgpass
+
+tags:
+  nofailover: false    # 此節點是否允許升格為 Primary
+  noloadbalance: false # 是否加入負載平衡輪詢
+  clonefrom: false     # 是否允許其他節點從此節點 clone
+  nosync: false        # 是否為同步複製節點

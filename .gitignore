@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────
+#  Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ─────────────────────────────────────────────────────────────
+#  Environment & secrets
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+*.local
+
+# ─────────────────────────────────────────────────────────────
+#  OS / editor
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# ─────────────────────────────────────────────────────────────
+#  Runtime logs & test artifacts
+# ─────────────────────────────────────────────────────────────
+logs/
+test_results/
+traffic_test_*.log
+tmux-*.log
+*.log
+
+# ─────────────────────────────────────────────────────────────
+#  AI chat transcripts (local working notes only)
+# ─────────────────────────────────────────────────────────────
+chat_*.json
+**/chat_*.json
+
+# ─────────────────────────────────────────────────────────────
+#  document/ : default-deny.
+#  Only the curated, publishable artifacts below are tracked.
+# ─────────────────────────────────────────────────────────────
+document/*
+document/copilot_chat/
+!document/class_diagram.pdf
+!document/system_architecture.pdf
+!document/Sequence_Chaos.pdf
+!document/presentation_slides.pdf
+!document/project_wiki.pdf
+!document/sre_testing_runbook.md
+!document/usage.txt

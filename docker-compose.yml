@@ -1,0 +1,470 @@
+version: '3.8'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 高可用 PostgreSQL 叢集架構（Docker Compose 本地模擬）
+#
+# 架構層次：
+#   etcd 集群    ← Raft 共識，儲存 Patroni 分散式鎖（Leader Lease）
+#   Patroni 層   ← 三個 PostgreSQL 節點，由 Patroni 守護行程管理主從關係
+#   HAProxy      ← 路由寫入→Primary（port 5432），讀取→Replica（port 5433）
+#   應用層       ← FastAPI（8000）+ Redis Sentinel HA（1 Master + 2 Replica + 3 Sentinel）
+#   監控層       ← Prometheus（9090）+ Grafana（3000）+ Exporters
+#
+# 節點設計：
+#   patroni1  →  初始 Primary（Master）
+#   patroni2  →  初始 Replica（Follower）← 接收 WAL Streaming
+#   patroni3  →  初始 Replica（Follower）← 接收 WAL Streaming
+#
+# Failover 流程：
+#   Primary 故障 → etcd TTL(30s) 到期 → Patroni 競爭新 Leader Lease
+#   → WAL 最新的 Replica 勝出 → 升格為新 Primary → HAProxy 自動路由切換
+# ──────────────────────────────────────────────────────────────────────────────
+
+networks:
+  pg_ha_net:
+    driver: bridge
+
+volumes:
+  pgdata1:
+  pgdata2:
+  pgdata3:
+  etcd1_data:
+  etcd2_data:
+  etcd3_data:
+  prometheus_data:
+  grafana_data:
+  redis_master_data:
+  redis_replica1_data:
+  redis_replica2_data:
+
+services:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 1：etcd 集群（3 節點 Raft）
+  # ══════════════════════════════════════════════════════════════════════════
+
+  etcd1:
+    image: gcr.io/etcd-development/etcd:v3.5.16
+    hostname: etcd1
+    networks: [pg_ha_net]
+    volumes:
+      - etcd1_data:/etcd-data
+    environment:
+      ETCDCTL_API: "3"
+      ETCD_NAME: etcd1
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+      ETCD_INITIAL_CLUSTER: "etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380"
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: pg-ha-cluster-token
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  etcd2:
+    image: gcr.io/etcd-development/etcd:v3.5.16
+    hostname: etcd2
+    networks: [pg_ha_net]
+    volumes:
+      - etcd2_data:/etcd-data
+    environment:
+      ETCDCTL_API: "3"
+      ETCD_NAME: etcd2
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+      ETCD_INITIAL_CLUSTER: "etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380"
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: pg-ha-cluster-token
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  etcd3:
+    image: gcr.io/etcd-development/etcd:v3.5.16
+    hostname: etcd3
+    networks: [pg_ha_net]
+    volumes:
+      - etcd3_data:/etcd-data
+    environment:
+      ETCDCTL_API: "3"
+      ETCD_NAME: etcd3
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+      ETCD_INITIAL_CLUSTER: "etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380"
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: pg-ha-cluster-token
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 2：PostgreSQL + Patroni 叢集（1 Primary + 2 Replica）
+  # ══════════════════════════════════════════════════════════════════════════
+
+  patroni1:
+    build:
+      context: .
+      dockerfile: patroni/Dockerfile
+    hostname: patroni1
+    networks: [pg_ha_net]
+    volumes:
+      - pgdata1:/data/patroni1
+    environment:
+      PATRONI_NAME: patroni1
+      PATRONI_SCOPE: pg-ha-cluster
+      PATRONI_NAMESPACE: /db/
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni1:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni1:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /data/patroni1
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: postgres123
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: replicator123
+    ports:
+      - "5441:5432"   # DEBUG：直接連 patroni1
+      - "8081:8008"   # Patroni REST API → curl http://localhost:8081/patroni
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8008/patroni"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  patroni2:
+    build:
+      context: .
+      dockerfile: patroni/Dockerfile
+    hostname: patroni2
+    networks: [pg_ha_net]
+    volumes:
+      - pgdata2:/data/patroni2
+    environment:
+      PATRONI_NAME: patroni2
+      PATRONI_SCOPE: pg-ha-cluster
+      PATRONI_NAMESPACE: /db/
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni2:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni2:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /data/patroni2
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: postgres123
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: replicator123
+    ports:
+      - "5442:5432"
+      - "8082:8008"
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8008/patroni"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  patroni3:
+    build:
+      context: .
+      dockerfile: patroni/Dockerfile
+    hostname: patroni3
+    networks: [pg_ha_net]
+    volumes:
+      - pgdata3:/data/patroni3
+    environment:
+      PATRONI_NAME: patroni3
+      PATRONI_SCOPE: pg-ha-cluster
+      PATRONI_NAMESPACE: /db/
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni3:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni3:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /data/patroni3
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: postgres123
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: replicator123
+    ports:
+      - "5443:5432"
+      - "8083:8008"
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8008/patroni"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 3：HAProxy（讀寫分離路由）
+  # port 5432 → Primary（/master 健康檢查）
+  # port 5433 → Replica（/replica 健康檢查，輪詢）
+  # port 7001 → Stats → http://localhost:7001/stats
+  # ══════════════════════════════════════════════════════════════════════════
+
+  haproxy:
+    image: haproxy:2.8
+    hostname: haproxy
+    networks: [pg_ha_net]
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5432:5432"
+      - "5433:5433"
+      - "7001:7000"
+    depends_on:
+      patroni1:
+        condition: service_healthy
+      patroni2:
+        condition: service_healthy
+      patroni3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 4：應用層
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 4：Redis HA（1 Master + 2 Replica + 3 Sentinel）
+  #
+  # Failover 流程：
+  #   Master 停機 → Sentinel 標記 SDOWN → Quorum(2) 確認 → ODOWN
+  #   → Raft-like 投票選出 Leader Sentinel
+  #   → 評估 Replica Replication Offset → 最新 Replica 升格為新 Master
+  #   → 通知 FastAPI（redis-py Sentinel client）自動切換連線
+  # ══════════════════════════════════════════════════════════════════════════
+
+  redis-master:
+    image: redis:7-alpine
+    hostname: redis-master
+    networks: [pg_ha_net]
+    volumes:
+      - redis_master_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --bind 0.0.0.0 --protected-mode no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-replica1:
+    image: redis:7-alpine
+    hostname: redis-replica1
+    networks: [pg_ha_net]
+    volumes:
+      - redis_replica1_data:/data
+    ports:
+      - "6380:6379"
+    command: redis-server --bind 0.0.0.0 --protected-mode no --replicaof redis-master 6379
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-replica2:
+    image: redis:7-alpine
+    hostname: redis-replica2
+    networks: [pg_ha_net]
+    volumes:
+      - redis_replica2_data:/data
+    ports:
+      - "6381:6379"
+    command: redis-server --bind 0.0.0.0 --protected-mode no --replicaof redis-master 6379
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  sentinel1:
+    image: redis:7-alpine
+    hostname: sentinel1
+    networks: [pg_ha_net]
+    ports:
+      - "26379:26379"
+    command: >-
+      sh -c "MASTER_IP=$(nslookup redis-master 2>/dev/null | awk '/^Address:/{print $2}' | tail -1) && echo bind 0.0.0.0 > /tmp/s.conf && echo protected-mode no >> /tmp/s.conf && echo port 26379 >> /tmp/s.conf && echo sentinel monitor mymaster $${MASTER_IP:-redis-master} 6379 2 >> /tmp/s.conf && echo sentinel down-after-milliseconds mymaster 5000 >> /tmp/s.conf && echo sentinel failover-timeout mymaster 10000 >> /tmp/s.conf && echo sentinel parallel-syncs mymaster 1 >> /tmp/s.conf && exec redis-sentinel /tmp/s.conf"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica1:
+        condition: service_healthy
+      redis-replica2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  sentinel2:
+    image: redis:7-alpine
+    hostname: sentinel2
+    networks: [pg_ha_net]
+    ports:
+      - "26380:26379"
+    command: >-
+      sh -c "MASTER_IP=$(nslookup redis-master 2>/dev/null | awk '/^Address:/{print $2}' | tail -1) && echo bind 0.0.0.0 > /tmp/s.conf && echo protected-mode no >> /tmp/s.conf && echo port 26379 >> /tmp/s.conf && echo sentinel monitor mymaster $${MASTER_IP:-redis-master} 6379 2 >> /tmp/s.conf && echo sentinel down-after-milliseconds mymaster 5000 >> /tmp/s.conf && echo sentinel failover-timeout mymaster 10000 >> /tmp/s.conf && echo sentinel parallel-syncs mymaster 1 >> /tmp/s.conf && exec redis-sentinel /tmp/s.conf"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica1:
+        condition: service_healthy
+      redis-replica2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  sentinel3:
+    image: redis:7-alpine
+    hostname: sentinel3
+    networks: [pg_ha_net]
+    ports:
+      - "26381:26379"
+    command: >-
+      sh -c "MASTER_IP=$(nslookup redis-master 2>/dev/null | awk '/^Address:/{print $2}' | tail -1) && echo bind 0.0.0.0 > /tmp/s.conf && echo protected-mode no >> /tmp/s.conf && echo port 26379 >> /tmp/s.conf && echo sentinel monitor mymaster $${MASTER_IP:-redis-master} 6379 2 >> /tmp/s.conf && echo sentinel down-after-milliseconds mymaster 5000 >> /tmp/s.conf && echo sentinel failover-timeout mymaster 10000 >> /tmp/s.conf && echo sentinel parallel-syncs mymaster 1 >> /tmp/s.conf && exec redis-sentinel /tmp/s.conf"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica1:
+        condition: service_healthy
+      redis-replica2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: ./app
+    hostname: api
+    networks: [pg_ha_net]
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_SENTINEL_HOSTS=sentinel1:26379,sentinel2:26379,sentinel3:26379
+      - REDIS_MASTER_NAME=mymaster
+      - DATABASE_URL=postgresql://appuser:apppassword@haproxy:5432/appdb
+    depends_on:
+      haproxy:
+        condition: service_started
+      sentinel1:
+        condition: service_healthy
+      sentinel2:
+        condition: service_healthy
+      sentinel3:
+        condition: service_healthy
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TIER 5：監控層
+  # ══════════════════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:latest
+    hostname: prometheus
+    networks: [pg_ha_net]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    hostname: grafana
+    networks: [pg_ha_net]
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+
+  redis_exporter:
+    image: oliver006/redis_exporter:latest
+    hostname: redis_exporter
+    networks: [pg_ha_net]
+    environment:
+      REDIS_ADDR: redis://redis-master:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    hostname: postgres_exporter
+    networks: [pg_ha_net]
+    environment:
+      # postgres superuser 可查詢 pg_stat_replication / pg_replication_slots
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres123@haproxy:5432/postgres?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      haproxy:
+        condition: service_started

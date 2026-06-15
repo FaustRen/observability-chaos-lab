@@ -1,0 +1,137 @@
+========================================
+  啟動、驗證、測試完整步驟
+  API Monitoring — Hybrid Storage
+========================================
+
+【事前需求】
+    - Docker Desktop 已安裝並啟動
+    - Python 3.x 已安裝（用於本機腳本）
+    - 終端機中安裝 requests 套件：
+        pip install requests
+
+【Step 1】啟動所有服務（7 個容器）
+    切換到專案根目錄（含 docker-compose.yml 的那層）：
+        cd api_monitoring
+
+    啟動：
+        docker compose up -d
+
+    等待所有容器就緒（約 10~20 秒），確認狀態：
+        docker compose ps
+    應看到 18 個服務全部為 Up / healthy：
+        etcd1/2/3, patroni1/2/3, haproxy,
+        redis-master, redis-replica1, redis-replica2,
+        sentinel1, sentinel2, sentinel3,
+        api, redis_exporter, postgres_exporter, prometheus, grafana
+
+【Step 2】驗證各服務可存取
+    2.1 API 健康檢查：
+        http://localhost:8000/
+        → 回傳 {"message": "API is running normally.", "storage": "PostgreSQL + Redis (Hybrid)"}
+
+    2.2 Prometheus 指標端點：
+        http://localhost:8000/metrics/
+        → 看到純文字指標資料（以 # HELP 開頭），代表埋點成功
+
+    2.3 Prometheus 查詢介面：
+        http://localhost:9090
+        → 在搜尋欄輸入 http_requests_total，確認有資料
+
+    2.4 Grafana 視覺化：
+        http://localhost:3000
+        帳號：admin（密碼請參考 .env 或專案說明）
+
+    2.5 user_api 服務（需另外啟動）：
+        python3 user_api.py
+        http://localhost:8001/health  → {"status": "ok"}
+        http://localhost:8001/docs    → Swagger UI
+
+【Step 3】匯入 Grafana Dashboard
+    grafana_dashboard.json 為 Grafana v2 API 格式，需透過以下指令匯入，
+    無法使用 Grafana UI 的 Import 功能。
+
+    在專案根目錄（api_monitoring/）執行（把 YOUR_PASSWORD 換成你的 Grafana 密碼）：
+
+    Step 3.1 — 建立 Prometheus Datasource，並記下輸出的 UID：
+        python3 -c "
+import json, urllib.request, base64
+auth = base64.b64encode(b'admin:YOUR_PASSWORD').decode()
+payload = {'name':'Prometheus','type':'prometheus','url':'http://prometheus:9090','access':'proxy','isDefault':True}
+body = json.dumps(payload).encode()
+req = urllib.request.Request('http://localhost:3000/api/datasources', data=body, method='POST',
+    headers={'Authorization':'Basic '+auth,'Content-Type':'application/json'})
+resp = json.loads(urllib.request.urlopen(req).read())
+print('Datasource UID:', resp['datasource']['uid'])
+"
+
+    Step 3.2 — 匯入 Dashboard（把 YOUR_PASSWORD 和 NEW_DS_UID 換成 Step 3.1 輸出的 UID）：
+        python3 -c "
+import json, urllib.request, base64
+auth = base64.b64encode(b'admin:YOUR_PASSWORD').decode()
+with open('grafana_dashboard.json') as f:
+    content = f.read()
+content = content.replace('efmeo1r0mk8w0e', 'NEW_DS_UID')
+d = json.loads(content)
+d['metadata'].pop('resourceVersion', None)
+d['metadata'].pop('uid', None)
+d['metadata'].pop('creationTimestamp', None)
+d.pop('status', None)
+body = json.dumps(d).encode()
+req = urllib.request.Request(
+    'http://localhost:3000/apis/dashboard.grafana.app/v2/namespaces/default/dashboards',
+    data=body, method='POST',
+    headers={'Authorization': 'Basic ' + auth, 'Content-Type': 'application/json'}
+)
+print(urllib.request.urlopen(req).read().decode()[:80])
+print('Dashboard imported successfully')
+"
+
+    匯入成功後前往 Grafana → Dashboards，即可看到 dashboard。
+    Dashboard 包含 5 個 Row / 19 個 Panel：
+        Row 0：HTTP Traffic（Read API Traffic & Latency、Write API Traffic & Latency）
+        Row 1：HTTP Traffic（RPS、Latency P99/P95/P50、Error Rate、Total Requests）
+        Row 2：Redis Cache（Hit Rate、Hits vs Misses、Redis Errors）
+        Row 3：PostgreSQL（DB Query Duration P99、DB Errors）
+        Row 4：Log Storm / Chaos Indicators（Storm Active x2、Write Rate x2、Write Duration P99 x2、DB Connections）
+        Row 5：System Resources（CPU %、Memory %、Memory Used MB）
+    建議設定：Time Range = Last 15m，Auto Refresh = 5s
+
+【Step 4】啟動 user_api 服務（Terminal 1）
+    在專案根目錄執行：
+        python3 user_api.py
+    → 運行於 localhost:8001，模擬真實使用者行為（搜尋、查詢、註冊客戶）
+    → 暴露 /metrics 讓 Prometheus 採集 user_api_* 指標
+    → Swagger：http://localhost:8001/docs
+    ⚠️  需先啟動才能執行 user_traffic_generator.py
+
+【Step 5】產生雙服務流量 + 混沌測試（Terminal 2）
+    基本持續流量模式：
+        python3 user_traffic_generator.py
+
+    互動式五階段示範（簡報用，建議開啟 Grafana 對照）：
+        python3 user_traffic_generator.py --interactive
+        Phase 1：正常基線（兩個服務都有穩定低延遲流量）
+        Phase 2：user_api Log Storm（scatter P99 跳升 200ms+）
+        Phase 3：全系統 Log Storm（DB 壓力 + 強制 DB 錯誤觸發）
+        Phase 4：Connection Exhaust（4/5 DB 連線佔用 10s + 強制錯誤）
+        Phase 5：Recovery（全部停止，各面板回落）
+
+    Chaos 自動模式（不互動）：
+        python3 user_traffic_generator.py --chaos log-storm-all --chaos-duration 60
+    → Ctrl+C 可隨時中止，腳本自動執行 Recovery
+
+【Step 6】手動觸發單一異常（可獨立測試）
+    curl http://localhost:8000/api/anomaly/lag              # 延遲 2.5s
+    curl http://localhost:8000/api/anomaly/error            # HTTP 500
+    curl http://localhost:8000/api/anomaly/db-overload      # pg_sleep(3) 慢查詢
+    curl http://localhost:8000/api/anomaly/cache-flush      # 清空 Redis
+    curl http://localhost:8000/api/anomaly/redis-down       # Redis 斷線模擬
+    curl http://localhost:8000/api/anomaly/db-error         # 強制 DB 錯誤
+    curl http://localhost:8000/api/anomaly/log-storm/start  # 啟動 Log Storm
+    curl http://localhost:8000/api/anomaly/log-storm/stop   # 停止 Log Storm
+    curl http://localhost:8000/api/anomaly/log-storm/status # 查詢 Log Storm 狀態
+    curl http://localhost:8000/api/anomaly/connection-exhaust # 連線池耗盡 10s
+
+【Step 7】停止所有服務
+    docker compose down
+

@@ -1,0 +1,38 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # ── 主 FastAPI 應用 ───────────────────────────────────────────────────────
+  - job_name: 'fastapi-app'
+    static_configs:
+      - targets: ['api:8000']
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis_exporter:9121']
+
+  # ── PostgreSQL（含 pg_stat_replication / pg_replication_slots HA 指標）───
+  # postgres_exporter 連線至 HAProxy → 自動路由至當前 Primary
+  # 以 postgres superuser 連線，可查詢全域複製視圖
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+
+  # ── user_api（Host 端 port 8001）─────────────────────────────────────────
+  - job_name: 'user-api'
+    static_configs:
+      - targets: ['host.docker.internal:8001']
+
+  # ── Patroni REST API（各節點健康狀態）────────────────────────────────────
+  # /patroni 端點回傳 JSON（非 Prometheus 格式），此處僅做 HTTP 可達性確認
+  # 真實生產環境可加入 patroni_exporter 轉換為 Prometheus metrics
+  - job_name: 'patroni-health'
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+        - 'patroni1:8008'
+        - 'patroni2:8008'
+        - 'patroni3:8008'
+    # 即使端點回傳非標準格式也不中斷 Prometheus 本身
+    honor_labels: true
