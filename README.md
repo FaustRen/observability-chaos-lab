@@ -10,7 +10,15 @@ A fully self-contained backend system that runs locally and demonstrates an end-
 
 ---
 
-## ✨ Highlights
+## Project Status
+
+A personal backend project exploring observability and chaos engineering, now open-sourced on GitHub. It covers dual high availability (PostgreSQL Patroni, Redis Sentinel), RED-method observability, and fault injection.
+
+To be upfront: this is still a work in progress. Many parts need testing across more scenarios, and it is still some way from the level of generality I am aiming for. I am publishing it at this stage to show my architectural thinking and implementation details (layered design, metric registration, connection-pool management) through real code, rather than presenting it as a finished product.
+
+---
+
+## Highlights
 
 | Aspect | Description |
 |---|---|
@@ -22,7 +30,7 @@ A fully self-contained backend system that runs locally and demonstrates an end-
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```
                               ┌──────────────┐
@@ -46,7 +54,7 @@ See [document/project_wiki.pdf](document/project_wiki.pdf) and [document/system_
 
 ---
 
-## 🧱 Tech Stack
+## Tech Stack
 
 - **Application framework**: FastAPI (Python 3.x)
 - **Cache HA**: Redis Master/Replica + Redis Sentinel (quorum=2)
@@ -56,7 +64,7 @@ See [document/project_wiki.pdf](document/project_wiki.pdf) and [document/system_
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Docker Desktop (running)
@@ -82,7 +90,7 @@ For the full startup, dashboard import, and testing flow, see [document/usage.tx
 
 ---
 
-## 🔌 API Endpoints
+## API Endpoints
 
 ### Business endpoints
 | Method | Path | Description |
@@ -104,7 +112,7 @@ For the full startup, dashboard import, and testing flow, see [document/usage.tx
 
 ---
 
-## 📊 Monitoring & Dashboards
+## Monitoring & Dashboards
 
 `grafana_dashboard.json` uses the Grafana v2 API format and must be imported via command line (not the UI Import).
 Import steps are detailed in [document/usage.txt](document/usage.txt). The dashboard covers:
@@ -116,9 +124,9 @@ Import steps are detailed in [document/usage.txt](document/usage.txt). The dashb
 
 ---
 
-## 📸 Live Demo — Dashboard Overview
+## Dashboard Overview
 
-The full Grafana dashboard captured live during a chaos run — a single view spanning the entire RED-method chain: HTTP traffic & latency, Redis cache, PostgreSQL, log-storm / chaos indicators, and system resources.
+A full Grafana dashboard captured during a chaos run, showing the entire RED-method chain: HTTP traffic and latency, Redis cache, PostgreSQL, log-storm / chaos indicators, and system resources.
 
 ![Grafana + Prometheus dashboard overview](document/screenshots/grafana_prometheus_dashboard.png)
 
@@ -126,7 +134,7 @@ For the full chaos and failover walkthrough, see [document/sre_testing_runbook.e
 
 ---
 
-## 🧪 Chaos & Load-Testing Scripts
+## Chaos & Load-Testing Scripts
 
 | Script | Purpose |
 |---|---|
@@ -138,7 +146,7 @@ For the full chaos and failover test runbook, see [document/sre_testing_runbook.
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 api_monitoring/
@@ -160,7 +168,7 @@ api_monitoring/
 
 ---
 
-## 📚 Further Documentation
+## Further Documentation
 
 | Document | English | 繁體中文 |
 |---|---|---|
@@ -176,6 +184,6 @@ Diagrams (language-neutral):
 
 ---
 
-## 📄 License
+## License
 
 Released under the [MIT License](LICENSE).

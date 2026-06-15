@@ -10,7 +10,15 @@
 
 ---
 
-## ✨ 核心特色
+## 專案說明
+
+此為個人開發的後端可觀測性與混沌工程實驗專案，已於 GitHub 開源，涵蓋雙重高可用（PostgreSQL Patroni、Redis Sentinel）、RED-method 觀測與故障注入等實作。
+
+我想誠實說明：這是一個仍在迭代中的作品，許多面向尚需更多情境測試，距離我心中的「通用化」還有一段路。選擇在此階段公開，是希望透過真實程式碼展現我的架構思維、實作細節（分層設計、指標註冊、連線池管理）與持續精進的態度，而非一個「完成品」。
+
+---
+
+## 核心特色
 
 | 面向 | 內容 |
 |---|---|
@@ -22,7 +30,7 @@
 
 ---
 
-## 🏗️ 系統架構
+## 系統架構
 
 ```
                               ┌──────────────┐
@@ -46,7 +54,7 @@
 
 ---
 
-## 🧱 技術棧
+## 技術棧
 
 - **應用框架**：FastAPI (Python 3.x)
 - **快取高可用**：Redis Master/Replica + Redis Sentinel（quorum=2）
@@ -56,7 +64,7 @@
 
 ---
 
-## 🚀 快速開始
+## 快速開始
 
 ### 事前需求
 - Docker Desktop（已啟動）
@@ -82,7 +90,7 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 🔌 API 端點
+## API 端點
 
 ### 業務端點
 | 方法 | 路徑 | 說明 |
@@ -104,7 +112,7 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 📊 監控與儀表板
+## 監控與儀表板
 
 `grafana_dashboard.json` 為 Grafana v2 API 格式，需以指令匯入（非 UI Import）。
 匯入步驟詳見 [document/usage.txt](document/usage.txt)。儀表板涵蓋：
@@ -116,9 +124,9 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 📸 實機展示 — 儀表板總覽
+## 儀表板總覽
 
-混沌測試期間從 Grafana 即時擷取的完整儀表板——一個畫面涵蓋整條 RED Method 鏈：HTTP 流量與延遲、Redis 快取、PostgreSQL、日誌風暴 / 混沌指標、以及系統資源。
+混沌測試期間從 Grafana 擷取的完整儀表板，一個畫面涵蓋整條 RED Method 鏈：HTTP 流量與延遲、Redis 快取、PostgreSQL、日誌風暴 / 混沌指標、以及系統資源。
 
 ![Grafana + Prometheus 儀表板總覽](document/screenshots/grafana_prometheus_dashboard.png)
 
@@ -126,7 +134,7 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 🧪 混沌與壓測腳本
+## 混沌與壓測腳本
 
 | 腳本 | 用途 |
 |---|---|
@@ -138,7 +146,7 @@ docker compose ps           # 確認皆為 Up / healthy
 
 ---
 
-## 📁 專案結構
+## 專案結構
 
 ```
 api_monitoring/
@@ -160,7 +168,7 @@ api_monitoring/
 
 ---
 
-## 📚 延伸文件
+## 延伸文件
 
 | 文件 | 繁體中文 | English |
 |---|---|---|
@@ -176,6 +184,6 @@ api_monitoring/
 
 ---
 
-## 📄 授權條款
+## 授權條款
 
 本專案以 [MIT License](LICENSE) 釋出。
