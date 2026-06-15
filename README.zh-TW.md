@@ -163,3 +163,9 @@ api_monitoring/
 - [系統架構圖（PDF）](document/system_architecture.pdf)
 - [類別圖（PDF）](document/class_diagram.pdf)
 - [混沌情境序列圖（PDF）](document/Sequence_Chaos.pdf)
+
+---
+
+## 📄 授權條款
+
+本專案以 [MIT License](LICENSE) 釋出。

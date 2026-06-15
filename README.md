@@ -163,3 +163,9 @@ Diagrams (language-neutral):
 - [System Architecture (PDF)](document/system_architecture.pdf)
 - [Class Diagram (PDF)](document/class_diagram.pdf)
 - [Chaos Scenario Sequence Diagram (PDF)](document/Sequence_Chaos.pdf)
+
+---
+
+## 📄 License
+
+Released under the [MIT License](LICENSE).
